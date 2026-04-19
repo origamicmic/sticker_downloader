@@ -9,6 +9,9 @@ __pycache__/
 
 # 配置文件
 config.ini
+.env
+.env.local
+.env.*.local
 
 # 日志文件
 *.log
