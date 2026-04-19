@@ -67,10 +67,9 @@ def _cleanup_user_data(user_id: int):
     # 清理用户的每日使用记录
     if user_id in user_daily_usage:
         if today != user_daily_usage[user_id]['date']:
-            del user_daily_usage[user_id]
+            user_daily_usage[user_id] = {'date': today, 'count': 0}
 
 def check_rate_limit(user_id: int, sticker_count: int = 1, check_only: bool = False):
-    """检查速率限制"""
     global bot_daily_count
     _cleanup_user_data(user_id)
     today = datetime.now().date()
@@ -82,7 +81,7 @@ def check_rate_limit(user_id: int, sticker_count: int = 1, check_only: bool = Fa
     # 用户每日限制
     if user_id in user_daily_usage and user_daily_usage[user_id]['date'] == today:
         if user_daily_usage[user_id]['count'] + sticker_count > USER_DAILY_LIMIT:
-            return False, "你今天已经用太多啦～明天再来喵😺"
+            return False, "今天已经不行惹😿达咩达咩"
     
     # 每分钟限制
     if user_id not in user_interactions:
@@ -108,65 +107,96 @@ def check_rate_limit(user_id: int, sticker_count: int = 1, check_only: bool = Fa
 
     return True, None
 
-# ====================== 转换函数 ======================
-async def download_to_drive(file_id, context, suffix):
-    """下载文件到临时目录"""
-    new_file = await context.bot.get_file(file_id)
-    file_path = create_temp_file(suffix)
-    await new_file.download_to_drive(file_path)
-    return file_path
-
-# ====================== 贴纸处理 ======================
-async def process_sticker(sticker, context):
-    """处理贴纸"""
-    temp_file_paths = []
+# ====================== 转换 & 处理函数 ======================
+def convert_tgs_to_gif(tgs_path, gif_path):
     try:
-        # 处理静态贴纸
-        if sticker.is_animated:
-            # 处理动画贴纸
-            file_path = await download_to_drive(sticker.file_id, context, '.tgs')
-            temp_file_paths.append(file_path)
-            output_path = create_temp_file('.gif')
-            temp_file_paths.append(output_path)
-            # 这里可以添加转换逻辑
-            return output_path, 'gif'
-        else:
-            # 处理静态贴纸
-            file_path = await download_to_drive(sticker.file_id, context, '.png')
-            temp_file_paths.append(file_path)
-            return file_path, 'png'
+        import lottie
+        from lottie.exporters import export_gif
+        from lottie.parsers.tgs import parse_tgs
+        animation = parse_tgs(tgs_path)
+        export_gif(animation, gif_path, 512, 512, 30)
+        return True
     except Exception as e:
-        logger.error(f"处理贴纸时出错: {e}", exc_info=True)
-        return None, None
-    finally:
-        # 清理临时文件
-        for path in temp_file_paths:
-            try:
-                if os.path.exists(path):
-                    os.unlink(path)
-            except Exception:
-                pass
+        logger.error(f"TGS转GIF失败: {str(e)}")
+        return False
 
-# ====================== 命令处理 ======================
+def convert_webm_to_gif(webm_path, gif_path):
+    try:
+        import subprocess
+        cmd = ['ffmpeg', '-i', webm_path, '-vf', 'scale=512:-1', '-pix_fmt', 'rgb24', '-loop', '0', '-y', gif_path]
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        return result.returncode == 0 and os.path.exists(gif_path) and os.path.getsize(gif_path) > 0
+    except Exception as e:
+        logger.error(f"WebM转GIF失败: {str(e)}")
+        return False
+
+def handle_transparent_background(image_path):
+    try:
+        from PIL import Image
+        img = Image.open(image_path)
+
+        if img.mode in ('RGBA', 'LA') or (img.mode == 'P' and 'transparency' in img.info):
+            # 标准白色背景处理
+            if img.mode == 'P':
+                img = img.convert('RGBA')
+            alpha = img.split()[-1]
+            background = Image.new('RGB', img.size, (255, 255, 255))
+            background.paste(img.convert('RGB'), (0, 0), alpha)
+            img = background
+        else:
+            img = img.convert('RGB')
+
+        img.save(image_path, 'PNG')
+        return True
+    except Exception as e:
+        logger.error(f"透明背景处理失败: {str(e)}")
+        return False
+
+async def process_sticker(file_id, context):
+    """处理单张贴纸，返回最终文件路径"""
+    file = await context.bot.get_file(file_id)
+    file_path = file.file_path
+    file_extension = os.path.splitext(file_path)[1].lower()
+
+    if file_extension in ['.tgs', '.webm']:
+        temp_original = create_temp_file(file_extension)
+        await file.download_to_drive(temp_original)
+
+        temp_gif = create_temp_file('.gif')
+        success = False
+        if file_extension == '.tgs':
+            success = convert_tgs_to_gif(temp_original, temp_gif)
+        elif file_extension == '.webm':
+            success = convert_webm_to_gif(temp_original, temp_gif)
+
+        if success:
+            os.unlink(temp_original)      # 删除原始动画文件
+            return temp_gif
+        else:
+            os.unlink(temp_gif)           # 删除失败的GIF
+            return temp_original          # 返回原始文件
+
+    else:
+        # 静态贴纸PNG处理
+        png_path = create_temp_file('.png')
+        await file.download_to_drive(png_path)
+        handle_transparent_background(png_path)
+        return png_path
+
+# ====================== Bot 命令 & 处理 ======================
 async def start(update: Update, context):
-    """处理 /start 命令"""
-    await update.message.reply_text(
-        "你好呀～\n我是一个可以帮你下载 Telegram 贴纸的机器人！\n\n"+
-        "使用方法：\n"+
-        "1. 直接向我发送一个贴纸\n"+
-        "2. 选择下载选项\n"+
-        "3. 我会将贴纸转换为相应格式并发送给你\n\n"+
-        "发送 /limit 命令可以查询今日已使用次数"
-    )
+    await update.message.reply_text('Ciallo～(∠・ω< )⌒★\n直接发送贴纸给咱就可以了喵😼')
 
 async def limit(update: Update, context):
-    """处理 /limit 命令"""
     user_id = update.message.from_user.id
-    _cleanup_user_data(user_id)
+    _cleanup_user_data(user_id)   # 复用清理逻辑
     today = datetime.now().date()
-
+    
     # 获取用户今日使用次数
-    used = user_daily_usage.get(user_id, {}).get('count', 0)
+    if user_id in user_daily_usage and user_daily_usage[user_id]['date'] == today:
+        used = user_daily_usage[user_id]['count']
+    else:
+        used = 0
     
     # 计算用户剩余次数
     user_remaining = USER_DAILY_LIMIT - used
@@ -178,7 +208,6 @@ async def limit(update: Update, context):
         await update.message.reply_text(f"今日已使用{used}次！")
 
 async def handle_sticker(update: Update, context):
-    """处理贴纸消息"""
     user_id = update.message.from_user.id
     
     # 检查限流（只检查，不增加计数）
@@ -191,168 +220,110 @@ async def handle_sticker(update: Update, context):
     unique_id = str(uuid.uuid4())[:8]
     context.user_data[unique_id] = {'file_id': sticker.file_id, 'set_name': sticker.set_name}
 
-    # 根据贴纸是否在贴纸包中，显示不同的按钮
     if sticker.set_name:
-        keyboard = [
-            [InlineKeyboardButton("整个贴纸包", callback_data=f"pack_{unique_id}")],
-            [InlineKeyboardButton("仅下载这张", callback_data=f"single_{unique_id}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("选择下载选项喵~", reply_markup=reply_markup)
+        keyboard = [[InlineKeyboardButton("📁整个贴纸包", callback_data=f"pack_{unique_id}"),
+                     InlineKeyboardButton("🖼仅下载这张", callback_data=f"single_{unique_id}")]]
+        text = "是否下载该贴纸所在的整个贴纸包？"
     else:
-        keyboard = [
-            [InlineKeyboardButton("仅下载这张", callback_data=f"single_{unique_id}")]
-        ]
-        reply_markup = InlineKeyboardMarkup(keyboard)
-        await update.message.reply_text("这是一个独立贴纸喵~", reply_markup=reply_markup)
+        keyboard = [[InlineKeyboardButton("🖼仅下载这张", callback_data=f"single_{unique_id}")]]
+        text = "选择操作："
 
-async def button_callback(update: Update, context):
-    """处理按钮回调"""
-    query = update.callback_query
-    await query.answer()
+    await update.message.reply_text(text, reply_markup=InlineKeyboardMarkup(keyboard))
 
-    # 解析回调数据
-    data = query.data
-    user_id = query.from_user.id
-
-    # 检查限流
-    allowed, message = check_rate_limit(user_id)
-    if not allowed:
-        await query.edit_message_text(text=message)
-        return
-
-    if data.startswith('single_'):
-        # 下载单个贴纸
-        unique_id = data.split('_')[1]
-        if unique_id not in context.user_data:
-            await query.edit_message_text(text="贴纸信息过期了呜，请重新发送贴纸")
-            return
-
-        sticker_data = context.user_data[unique_id]
-        file_id = sticker_data['file_id']
-
-        # 获取贴纸对象
-        try:
-            sticker = await context.bot.get_sticker(file_id)
-            await send_single_sticker(query, context, sticker)
-        except Exception as e:
-            logger.error(f"获取贴纸时出错: {e}", exc_info=True)
-            await query.edit_message_text(text="获取贴纸信息失败呜，请重试")
-
-    elif data.startswith('pack_'):
-        # 下载整个贴纸包
-        unique_id = data.split('_')[1]
-        if unique_id not in context.user_data:
-            await query.edit_message_text(text="贴纸信息过期了呜，请重新发送贴纸")
-            return
-
-        sticker_data = context.user_data[unique_id]
-        set_name = sticker_data['set_name']
-
-        # 获取贴纸包
-        try:
-            sticker_set = await context.bot.get_sticker_set(set_name)
-            await send_sticker_pack(query, context, sticker_set)
-        except Exception as e:
-            logger.error(f"获取贴纸包时出错: {e}", exc_info=True)
-            await query.edit_message_text(text="获取贴纸包失败呜，请重试")
-
-async def send_single_sticker(query, context, sticker):
-    """发送单个贴纸"""
+async def send_single_sticker(file_id, update, context):
     processed_file = None
     try:
-        # 处理贴纸
-        processed_file, file_type = await process_sticker(sticker, context)
-        if not processed_file:
-            await query.edit_message_text(text="处理贴纸失败呜，请重试")
-            return
+        await update.callback_query.edit_message_text("正在处理中😼稍等喵...")
+        processed_file = await process_sticker(file_id, context)
 
-        # 发送处理后的文件
-        if file_type == 'gif':
-            await context.bot.send_animation(
-                chat_id=query.message.chat_id,
-                animation=open(processed_file, 'rb'),
-                caption="这是你要的贴纸喵～"
-            )
+        await update.callback_query.delete_message()
+
+        if processed_file.endswith('.gif'):
+            with open(processed_file, 'rb') as f:
+                await update.callback_query.message.reply_animation(animation=f)
         else:
-            await context.bot.send_photo(
-                chat_id=query.message.chat_id,
-                photo=open(processed_file, 'rb'),
-                caption="这是你要的贴纸喵～"
-            )
-        await query.edit_message_text(text="下载完成啦～")
+            with open(processed_file, 'rb') as f:
+                await update.callback_query.message.reply_photo(photo=f)
     except Exception as e:
-        logger.error(f"发送贴纸时出错: {e}", exc_info=True)
-        await query.edit_message_text(text="发送贴纸失败呜，请重试")
+        await update.callback_query.edit_message_text(f"处理失败：{str(e)}")
     finally:
-        # 清理临时文件
         if processed_file and os.path.exists(processed_file):
             try:
                 os.unlink(processed_file)
-            except Exception:
+            except:
                 pass
 
-async def send_sticker_pack(query, context, sticker_set):
-    """发送整个贴纸包"""
+async def send_sticker_pack(pack_name, update, context):
     zip_path = None
     try:
-        # 创建临时 ZIP 文件
-        zip_path = create_temp_file('.zip')
+        await update.callback_query.edit_message_text("正在处理中😼稍等喵...")
+        stickers = await context.bot.get_sticker_set(pack_name)
 
-        # 下载并打包所有贴纸
-        with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for i, sticker in enumerate(sticker_set.stickers):
-                # 处理贴纸
-                processed_file, file_type = await process_sticker(sticker, context)
-                if not processed_file:
-                    continue
+        with tempfile.NamedTemporaryFile(suffix='.zip', delete=False) as temp_zip:
+            zip_path = temp_zip.name
 
-                # 生成文件名
-                filename = f"sticker_{i+1}.{file_type}"
-                zipf.write(processed_file, filename)
+        with zipfile.ZipFile(zip_path, 'w') as zipf:
+            for i, sticker in enumerate(stickers.stickers):
+                processed_file = await process_sticker(sticker.file_id, context)
+                new_name = f"sticker_{i+1}{os.path.splitext(processed_file)[1]}"
+                zipf.write(processed_file, new_name)
+                os.unlink(processed_file)
 
-                # 清理临时文件
-                try:
-                    os.unlink(processed_file)
-                except Exception:
-                    pass
-
-        # 发送 ZIP 文件
-        await context.bot.send_document(
-            chat_id=query.message.chat_id,
-            document=open(zip_path, 'rb'),
-            filename=f"{sticker_set.name}.zip",
-            caption=f"这是 '{sticker_set.title}' 贴纸包喵～"
-        )
-        await query.edit_message_text(text="下载完成啦～")
+        await update.callback_query.delete_message()
+        with open(zip_path, 'rb') as f:
+            await update.callback_query.message.reply_document(document=f, filename=f"sticker_pack_{pack_name}.zip")
     except Exception as e:
-        logger.error(f"发送贴纸包时出错: {e}", exc_info=True)
-        await query.edit_message_text(text="发送贴纸包失败呜，请重试")
+        await update.callback_query.edit_message_text(f"处理失败：{str(e)}")
     finally:
-        # 清理临时文件
         if zip_path and os.path.exists(zip_path):
             try:
                 os.unlink(zip_path)
-            except Exception:
+            except:
                 pass
 
-# ====================== 主函数 ======================
+async def button_callback(update: Update, context):
+    query = update.callback_query
+    await query.answer()
+    callback_data = query.data
+    user_id = query.from_user.id
+
+    if callback_data.startswith('pack_'):
+        unique_id = callback_data.split('pack_')[1]
+        if unique_id in context.user_data:
+            pack_name = context.user_data[unique_id]['set_name']
+            try:
+                stickers = await context.bot.get_sticker_set(pack_name)
+                allowed, msg = check_rate_limit(user_id, len(stickers.stickers))
+                if not allowed:
+                    await query.edit_message_text(text=msg)
+                    return
+                await send_sticker_pack(pack_name, update, context)
+            except Exception as e:
+                logger.error(f"获取贴纸包失败: {str(e)}")
+                await query.edit_message_text(text="获取贴纸包时出错了呜😿请稍后再试")
+        else:
+            await query.edit_message_text(text="贴纸信息过期了呜😿重新发给咱吧喵！")
+
+    elif callback_data.startswith('single_'):
+        unique_id = callback_data.split('single_')[1]
+        if unique_id in context.user_data:
+            file_id = context.user_data[unique_id]['file_id']
+            allowed, msg = check_rate_limit(user_id)
+            if not allowed:
+                await query.edit_message_text(text=msg)
+                return
+            await send_single_sticker(file_id, update, context)
+        else:
+            await query.edit_message_text(text="贴纸信息过期了呜😿重新发给咱吧喵！")
+
 def main():
-    """主函数"""
-    if not bot_token:
-        logger.error("❌ 请设置 TELEGRAM_BOT_TOKEN 环境变量")
-        return
-
     application = Application.builder().token(bot_token).build()
-
-    # 添加处理器
     application.add_handler(CommandHandler('start', start))
     application.add_handler(CommandHandler('limit', limit))
     application.add_handler(MessageHandler(filters.Sticker.ALL, handle_sticker))
     application.add_handler(CallbackQueryHandler(button_callback))
     application.add_error_handler(error_handler)
 
-    # 启动机器人
     logger.info("😸开始工作了喵～")
     application.run_polling()
 

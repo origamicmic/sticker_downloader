@@ -1,20 +1,23 @@
 # Sticker Downloader Bot
 
-一个 Telegram 贴纸下载机器人
+一个 Telegram 贴纸下载机器人，可以帮助你下载 Telegram 贴纸并转换为常见格式。
 
 ## 主要功能
 
-- 支持下载整个贴纸包和下载单个贴纸
-- 自动转换动画贴纸为GIF格式
-- 自动将透明背景的静态贴纸处理为白色背景
+- 支持下载单个贴纸
+- 支持下载整个贴纸包
+- 自动转换 TGS 动画贴纸为 GIF 格式
+- 自动转换 WebM 动画贴纸为 GIF 格式
+- 处理静态贴纸的透明背景
+- 支持查询使用次数
 
 ## 使用方法
 
-1. 直接向机器人发送贴纸
+1. 向机器人发送一个贴纸
 2. 选择下载选项：
    - 「整个贴纸包」：下载整个贴纸包的所有贴纸
    - 「仅下载这张」：只下载当前发送的贴纸
-3. 机器人会进行处理并返回相应的PNG/GIF格式图片
+3. 机器人会将贴纸转换为相应格式并发送给你
 4. 发送 `/limit` 命令可以查询今日已使用次数
 
 ## 自行部署
@@ -32,8 +35,8 @@
 
 1. 克隆仓库：
    ```bash
-   git clone https://github.com/origamicmic/sticker-downloader-bot.git
-   cd sticker-downloader-bot
+   git clone https://github.com/origamicmic/stickerdownloader_by_origamicmic.git
+   cd stickerdownloader_by_origamicmic
    ```
 
 2. 安装依赖：
@@ -44,7 +47,7 @@
 3. 配置环境变量：
    - `TELEGRAM_BOT_TOKEN`：你的 Telegram Bot Token
    - `MINUTE_LIMIT`：每分钟最大调用次数（可选，默认 10）
-   - `DAILY_LIMIT`：全局每日最大调用次数（可选，默认 2000）
+   - `DAILY_LIMIT`：每日最大调用次数（可选，默认 2000）
    - `USER_DAILY_LIMIT`：每个用户每日最大调用次数（可选，默认 2000）
 
 4. 运行机器人：
@@ -52,9 +55,7 @@
    python sticker_downloader_bot.py
    ```
 
-## 关于依赖的平台部署
-
-### 部分telegrambot托管平台不预装项目所需的依赖，如需托管至平台，可 Docker 部署
+### Docker 部署
 
 1. 构建 Docker 镜像：
    ```bash
@@ -71,6 +72,8 @@
      sticker-downloader-bot
    ```
 
-## 其他
+## 注意事项
+
+- 机器人使用内存存储用户数据，重启后会重置计数器
 - 下载的贴纸会自动清理，不会占用磁盘空间
-- 使用时请遵守Telegram的使用条款和相关法律法规
+- 请遵守 Telegram 的使用条款和相关法律法规
