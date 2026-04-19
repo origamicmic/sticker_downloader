@@ -148,7 +148,7 @@ def handle_transparent_background(image_path):
         else:
             img = img.convert('RGB')
 
-        img.save(image_path, 'PNG')
+        img.save(image_path, 'JPEG')
         return True
     except Exception as e:
         logger.error(f"透明背景处理失败: {str(e)}")
@@ -179,11 +179,11 @@ async def process_sticker(file_id, context):
             return temp_original          # 返回原始文件
 
     else:
-        # 静态贴纸PNG处理
-        png_path = create_temp_file('.png')
-        await file.download_to_drive(png_path)
-        handle_transparent_background(png_path)
-        return png_path
+        # 静态贴纸JPG处理
+        jpg_path = create_temp_file('.jpg')
+        await file.download_to_drive(jpg_path)
+        handle_transparent_background(jpg_path)
+        return jpg_path
 
 # ====================== Bot 命令 & 处理 ======================
 async def start(update: Update, context):
