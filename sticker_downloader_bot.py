@@ -50,7 +50,7 @@ def create_temp_file(suffix):
 
 # ====================== 速率限制 ======================
 def _cleanup_user_data(user_id: int):
-    """清理过期数据（check_rate_limit和/limit共用）"""
+    """清理过期数据(check_rate_limit和/limit共用)"""
     global bot_daily_count, bot_last_reset_date
     now = datetime.now()
     today = now.date()
@@ -94,7 +94,7 @@ def check_rate_limit(user_id: int, sticker_count: int = 1, check_only: bool = Fa
         if not check_only:
             user_interactions[user_id].append(datetime.now())
 
-    # 如果只是检查，不更新计数
+    # 检查不更新计数
     if check_only:
         return True, None
 
